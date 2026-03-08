@@ -5,11 +5,8 @@ app.use(express.json());
 
 const {
   GATEWAY_API_KEY,
-  DATASTAX_LANGFLOW_URL,
-  LANGFLOW_TENANT_ID,
-  FLOW_ID,
-  ASTRA_ORG_ID,
-  APPLICATION_TOKEN
+  DPH_API_URL,
+  DPH_API_KEY
 } = process.env;
 
 app.get("/health", (_req, res) => {
@@ -18,35 +15,45 @@ app.get("/health", (_req, res) => {
 
 app.post("/run", async (req, res) => {
   const received = (req.header("x-api-key") || "").trim().replace(/:$/, "");
+
+  console.log("----- Incoming GPT Request -----");
+  console.log("Headers x-api-key present:", !!req.header("x-api-key"));
+  console.log("Body:", JSON.stringify(req.body, null, 2));
+
   if (received !== GATEWAY_API_KEY) {
+    console.log("Unauthorized gateway request");
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  const { input_value, session_id } = req.body || {};
-  if (!input_value || typeof input_value !== "string") {
-    return res.status(400).json({ error: "input_value is required" });
-  }
-
-  const url =
-    `${DATASTAX_LANGFLOW_URL}/lf/${LANGFLOW_TENANT_ID}/api/v1/run/${FLOW_ID}?stream=false`;
-
   try {
+    const { path, method = "GET", body } = req.body || {};
+
+    if (!path || typeof path !== "string") {
+      return res.status(400).json({ error: "Missing required field: path" });
+    }
+
+    const url = `${DPH_API_URL}${path}`;
+
+    console.log("----- Outbound DPH Request -----");
+    console.log("Method:", method);
+    console.log("URL:", url);
+    console.log("Body:", JSON.stringify(body || {}, null, 2));
+
     const response = await fetch(url, {
-      method: "POST",
+      method,
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${APPLICATION_TOKEN}`,
-        "X-DataStax-Current-Org": ASTRA_ORG_ID
+        "Authorization": `Bearer ${DPH_API_KEY}`
       },
-      body: JSON.stringify({
-        input_value,
-        input_type: "chat",
-        output_type: "chat",
-        ...(session_id ? { session_id } : {})
-      })
+      body: method === "GET" ? undefined : JSON.stringify(body || {})
     });
 
     const text = await response.text();
+
+    console.log("----- DPH Response -----");
+    console.log("Status:", response.status);
+    console.log("Response body:", text);
+
     let data;
     try {
       data = JSON.parse(text);
@@ -55,16 +62,20 @@ app.post("/run", async (req, res) => {
     }
 
     if (!response.ok) {
-      return res.status(response.status).json(data);
+      return res.status(response.status).json({
+        error: "DPH API client/server error",
+        dph_status: response.status,
+        dph_response: data
+      });
     }
 
-    const answer =
-      data?.outputs?.[0]?.outputs?.[0]?.results?.message?.text ??
-      data?.outputs?.[0]?.outputs?.[0]?.results?.message ??
-      "";
-
-    return res.json({ answer, raw: data });
+    return res.json({
+      ok: true,
+      dph_status: response.status,
+      data
+    });
   } catch (err) {
+    console.log("Gateway failure:", err);
     return res.status(500).json({
       error: "Gateway failure",
       details: String(err)
