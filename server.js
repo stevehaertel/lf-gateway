@@ -1,5 +1,28 @@
+const express = require("express");
+
+const app = express();
+app.use(express.json());
+
+const {
+  GATEWAY_API_KEY,
+  DATASTAX_LANGFLOW_URL,
+  LANGFLOW_TENANT_ID,
+  FLOW_ID,
+  ASTRA_ORG_ID,
+  APPLICATION_TOKEN
+} = process.env;
+
+app.get("/", (_req, res) => {
+  res.send("gateway alive");
+});
+
+app.get("/health", (_req, res) => {
+  res.json({ ok: true });
+});
+
 app.post("/run", async (req, res) => {
   const received = (req.header("x-api-key") || "").trim().replace(/:$/, "");
+
   if (received !== GATEWAY_API_KEY) {
     return res.status(401).json({ error: "Unauthorized" });
   }
@@ -32,6 +55,7 @@ app.post("/run", async (req, res) => {
     });
 
     const text = await response.text();
+
     let data;
     try {
       data = JSON.parse(text);
@@ -60,9 +84,15 @@ app.post("/run", async (req, res) => {
       raw: data
     });
   } catch (err) {
+    console.error("Gateway failure:", err);
     return res.status(500).json({
       error: "Gateway failure",
       details: String(err)
     });
   }
+});
+
+const port = process.env.PORT || 10000;
+app.listen(port, () => {
+  console.log(`Gateway running on port ${port}`);
 });
