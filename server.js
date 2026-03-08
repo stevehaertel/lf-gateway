@@ -27,13 +27,13 @@ app.post("/run", async (req, res) => {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  const { query, session_id } = req.body || {};
+  const { raw_user_input, session_id } = req.body || {};
 
-  if (!query || typeof query !== "string") {
-    return res.status(400).json({ error: "Missing required field: query" });
+  if (!raw_user_input || typeof raw_user_input !== "string") {
+    return res.status(400).json({ error: "Missing required field: raw_user_input" });
   }
 
-  console.log("Incoming query:", query);
+  console.log("Incoming raw_user_input:", raw_user_input);
 
   const url =
     `${DATASTAX_LANGFLOW_URL}/lf/${LANGFLOW_TENANT_ID}/api/v1/run/${FLOW_ID}?stream=false`;
@@ -47,7 +47,7 @@ app.post("/run", async (req, res) => {
         "X-DataStax-Current-Org": ASTRA_ORG_ID
       },
       body: JSON.stringify({
-        input_value: query,
+        input_value: raw_user_input,
         input_type: "chat",
         output_type: "chat",
         ...(session_id ? { session_id } : {})
