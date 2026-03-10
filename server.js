@@ -36,7 +36,7 @@ app.post("/run", async (req, res) => {
   console.log("Incoming raw_user_input:", raw_user_input);
 
   const url =
-    `${DATASTAX_LANGFLOW_URL}/lf/${LANGFLOW_TENANT_ID}/api/v1/run/${FLOW_ID}?stream=false`;
+    `${DATASTAX_LANGFLOW_URL}/lf/${LANGFLOW_TENANT_ID}/api/v1/run/${FLOW_ID}?stream=true`;
 
   try {
     const response = await fetch(url, {
