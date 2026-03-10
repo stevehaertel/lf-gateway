@@ -63,19 +63,19 @@ app.post("/run", async (req, res) => {
       })
     });
 
-    const text = await response.text();
-
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = { raw: text };
-    }
-
     console.log("Langflow status:", response.status);
-    console.log("Langflow response:", text);
 
     if (!response.ok) {
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { raw: text };
+      }
+      
+      console.log("Langflow error response:", text);
+      
       return res.status(response.status).json({
         error: "Langflow API error",
         status: response.status,
@@ -83,15 +83,73 @@ app.post("/run", async (req, res) => {
       });
     }
 
-    const answer =
-      data?.outputs?.[0]?.outputs?.[0]?.results?.message?.text ??
-      data?.outputs?.[0]?.outputs?.[0]?.results?.message ??
-      "";
+    // Set headers for Server-Sent Events streaming
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
 
-    return res.json({
-      answer,
-      raw: data
-    });
+    // Stream the response from Langflow to the client
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    
+    let buffer = '';
+    let allEvents = [];
+    
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) {
+          break;
+        }
+        
+        // Decode the chunk
+        buffer += decoder.decode(value, { stream: true });
+        
+        // Process complete lines
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+        
+        for (const line of lines) {
+          if (line.trim()) {
+            try {
+              // Parse the JSON event
+              const event = JSON.parse(line);
+              allEvents.push(event);
+              
+              // Forward the event to the client
+              res.write(`data: ${line}\n\n`);
+              
+              console.log(`Streamed event: ${event.event}`);
+            } catch (e) {
+              console.error('Failed to parse event:', e);
+            }
+          }
+        }
+      }
+      
+      // Process any remaining buffer
+      if (buffer.trim()) {
+        try {
+          const event = JSON.parse(buffer);
+          allEvents.push(event);
+          res.write(`data: ${buffer}\n\n`);
+        } catch (e) {
+          console.error('Failed to parse final event:', e);
+        }
+      }
+      
+      console.log(`Streaming complete. Total events: ${allEvents.length}`);
+      
+      // End the stream
+      res.end();
+      
+    } catch (streamError) {
+      console.error('Streaming error:', streamError);
+      res.write(`data: ${JSON.stringify({ event: 'error', data: { error: String(streamError) } })}\n\n`);
+      res.end();
+    }
+    
   } catch (err) {
     console.error("Gateway failure:", err);
     return res.status(500).json({
@@ -105,3 +163,5 @@ const port = process.env.PORT || 10000;
 app.listen(port, () => {
   console.log(`Gateway running on port ${port}`);
 });
+
+// Made with Bob
