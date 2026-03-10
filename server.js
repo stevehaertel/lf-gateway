@@ -47,6 +47,10 @@ app.post("/run", async (req, res) => {
     hasToken: !!APPLICATION_TOKEN
   });
 
+  // Check if client accepts streaming
+  const acceptHeader = req.header("accept") || "";
+  const wantsStreaming = acceptHeader.includes("text/event-stream");
+
   try {
     const response = await fetch(url, {
       method: "POST",
@@ -83,71 +87,101 @@ app.post("/run", async (req, res) => {
       });
     }
 
-    // Set headers for Server-Sent Events streaming
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
+    // If client wants streaming, stream the response
+    if (wantsStreaming && response.body) {
+      console.log("Streaming response to client");
+      
+      // Set headers for Server-Sent Events streaming
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
 
-    // Stream the response from Langflow to the client
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    
-    let buffer = '';
-    let allEvents = [];
-    
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
+      try {
+        // Stream the response
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
         
-        if (done) {
-          break;
-        }
+        let buffer = '';
+        let eventCount = 0;
         
-        // Decode the chunk
-        buffer += decoder.decode(value, { stream: true });
-        
-        // Process complete lines
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep incomplete line in buffer
-        
-        for (const line of lines) {
-          if (line.trim()) {
-            try {
-              // Parse the JSON event
-              const event = JSON.parse(line);
-              allEvents.push(event);
-              
-              // Forward the event to the client
-              res.write(`data: ${line}\n\n`);
-              
-              console.log(`Streamed event: ${event.event}`);
-            } catch (e) {
-              console.error('Failed to parse event:', e);
+        while (true) {
+          const { done, value } = await reader.read();
+          
+          if (done) {
+            console.log(`Streaming complete. Total events: ${eventCount}`);
+            break;
+          }
+          
+          // Decode the chunk
+          buffer += decoder.decode(value, { stream: true });
+          
+          // Process complete lines
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; // Keep incomplete line in buffer
+          
+          for (const line of lines) {
+            if (line.trim()) {
+              try {
+                // Parse and forward the event
+                const event = JSON.parse(line);
+                eventCount++;
+                
+                // Forward as SSE
+                res.write(`data: ${line}\n\n`);
+                
+                // Log event type
+                if (eventCount % 10 === 0) {
+                  console.log(`Streamed ${eventCount} events...`);
+                }
+              } catch (e) {
+                console.error('Failed to parse event:', e);
+              }
             }
           }
         }
-      }
-      
-      // Process any remaining buffer
-      if (buffer.trim()) {
-        try {
-          const event = JSON.parse(buffer);
-          allEvents.push(event);
-          res.write(`data: ${buffer}\n\n`);
-        } catch (e) {
-          console.error('Failed to parse final event:', e);
+        
+        // Process any remaining buffer
+        if (buffer.trim()) {
+          try {
+            const event = JSON.parse(buffer);
+            res.write(`data: ${buffer}\n\n`);
+            eventCount++;
+          } catch (e) {
+            console.error('Failed to parse final event:', e);
+          }
         }
+        
+        // End the stream
+        res.end();
+        
+      } catch (streamError) {
+        console.error('Streaming error:', streamError);
+        res.write(`data: ${JSON.stringify({ event: 'error', data: { error: String(streamError) } })}\n\n`);
+        res.end();
       }
+    } else {
+      // Non-streaming response (original behavior)
+      console.log("Returning non-streaming response");
       
-      console.log(`Streaming complete. Total events: ${allEvents.length}`);
-      
-      // End the stream
-      res.end();
-      
-    } catch (streamError) {
-      console.error('Streaming error:', streamError);
-      res.write(`data: ${JSON.stringify({ event: 'error', data: { error: String(streamError) } })}\n\n`);
-      res.end();
+      const text = await response.text();
+
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { raw: text };
+      }
+
+      const answer =
+        data?.outputs?.[0]?.outputs?.[0]?.results?.message?.text ??
+        data?.outputs?.[0]?.outputs?.[0]?.results?.message ??
+        "";
+
+      return res.json({
+        answer,
+        raw: data
+      });
     }
     
   } catch (err) {
