@@ -38,6 +38,15 @@ app.post("/run", async (req, res) => {
   const url =
     `${DATASTAX_LANGFLOW_URL}/lf/${LANGFLOW_TENANT_ID}/api/v1/run/${FLOW_ID}?stream=true`;
 
+  console.log("Calling Langflow URL:", url);
+  console.log("Environment check:", {
+    hasUrl: !!DATASTAX_LANGFLOW_URL,
+    hasTenant: !!LANGFLOW_TENANT_ID,
+    hasFlow: !!FLOW_ID,
+    hasOrg: !!ASTRA_ORG_ID,
+    hasToken: !!APPLICATION_TOKEN
+  });
+
   try {
     const response = await fetch(url, {
       method: "POST",
